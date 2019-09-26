@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const defaultPort = 9999
+const defaultPort = 9963
 
 func main() {
 	// Initialize the server.
