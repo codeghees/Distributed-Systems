@@ -8,28 +8,40 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/http"
+	"net/rpc"
 	"strconv"
 	"strings"
 )
 
+type broadCast struct {
+	index int
+	rw    *bufio.ReadWriter
+}
 type keyValueServer struct {
 	// TODO: implement this!
 	// Count for connected.
 	// Channels for sending info
 	// Port Number
-	count       int
-	port        int
-	close       bool
-	PutChan     chan string
-	GetChan     chan string
-	GetBChan    chan string
-	GetMap      map[int](chan string)
-	GetBroad    map[int](chan string)
-	mapIndex    int
-	countchan   chan int
-	ln          net.Listener
-	CountSync   chan string //Syncing Channel
-	CountUpdate chan int
+	count        int
+	port         int
+	close        bool
+	PutChan      chan string
+	GetChan      chan string
+	GetBChan     chan string
+	GetMap       chan string
+	GetBroad     map[int](chan string)
+	mapIndex     int
+	countchan    chan int
+	ln           net.Listener
+	CountSync    chan string //Syncing Channel
+	CountUpdate  chan int
+	ReadWriteMap map[int](*bufio.ReadWriter)
+	GetBInit     chan broadCast
+	GetBIndex    chan string
+	RPCGetChan   chan string
+	RPCGetByte   chan []byte
+	RPCPutChan   chan rpcs.PutArgs
 }
 
 // New creates and returns (but does not start) a new KeyValueServer.
@@ -43,14 +55,20 @@ func New() KeyValueServer {
 	ptr.port = 0
 	ptr.mapIndex = 0
 	ptr.close = false
+	ptr.RPCPutChan = make(chan rpcs.PutArgs)
 	ptr.PutChan = make(chan string)
 	ptr.GetChan = make(chan string)
 	ptr.countchan = make(chan int)
 	ptr.GetBChan = make(chan string)
 	ptr.CountSync = make(chan string)
 	ptr.CountUpdate = make(chan int)
-	ptr.GetMap = make(map[int](chan string))
+	ptr.GetMap = make(chan string)
 	ptr.GetBroad = make(map[int](chan string))
+	ptr.ReadWriteMap = make(map[int](*bufio.ReadWriter))
+	ptr.GetBInit = make(chan broadCast)
+	ptr.GetBIndex = make(chan string)
+	ptr.RPCGetByte = make(chan []byte)
+	ptr.RPCGetChan = make(chan string)
 	initDB() // initialize Database
 
 	return ptr
@@ -58,26 +76,27 @@ func New() KeyValueServer {
 
 func (kvs *keyValueServer) ServerHandling() {
 
-	go kvs.PutThread()
+	go kvs.PutGetThread()
 	go kvs.countR()
-
+	go kvs.GetThread()
+	go kvs.CentralGetBThread()
 	for {
 		conn, err := kvs.ln.Accept()
 
 		if err != nil {
 			// fmt.Printf("Couldn't accept a client connection: %s\n", err)
 		} else {
-			kvs.GetMap[kvs.mapIndex] = make(chan string, 500)
-			kvs.GetBroad[kvs.mapIndex] = make(chan string, 500)
-
-			rw := kvs.ConnectionToRW(conn)
-			go kvs.ClientConn(conn, rw, kvs.mapIndex)
-			go kvs.GetBThread(kvs.mapIndex, rw)
-			go kvs.GetThread(kvs.mapIndex, rw)
-
-			kvs.mapIndex = kvs.mapIndex + 1
 
 			kvs.countchan <- 1
+			ptr := new(broadCast)
+			rw := kvs.ConnectionToRW(conn)
+			ptr.index = kvs.mapIndex
+			ptr.rw = rw
+			kvs.GetBInit <- *ptr
+			go kvs.ClientConn(conn, rw, kvs.mapIndex)
+			// go kvs.GetBThread(kvs.mapIndex, rw)
+			kvs.mapIndex = kvs.mapIndex + 1
+
 		}
 	}
 
@@ -85,7 +104,6 @@ func (kvs *keyValueServer) ServerHandling() {
 }
 
 func parse(base string, split string) [5]string {
-	// fmt.Println(base, split)
 	var theArray [5]string
 	index := 0
 	temp := ""
@@ -106,8 +124,11 @@ func parse(base string, split string) [5]string {
 	return theArray
 
 }
-func (kvs *keyValueServer) PutThread() {
+func (kvs *keyValueServer) PutGetThread() {
+	/*
+		ALL PUTS AND GETS ARE HANDLED HERE
 
+	*/
 	for {
 		select {
 		case msg := <-kvs.PutChan:
@@ -122,26 +143,47 @@ func (kvs *keyValueServer) PutThread() {
 			Svalue := string([]byte(value))
 			GetS := key + "," + Svalue
 			// fmt.Println(GetS)
-			for _, element := range kvs.GetBroad {
 
-				if len(element) < 500 {
-					element <- GetS
-
-				}
-			}
+			kvs.GetBIndex <- GetS
 
 		}
 	}
 }
 
-func (kvs *keyValueServer) GetThread(index int, rw *bufio.ReadWriter) {
+func (kvs *keyValueServer) CentralGetBThread() {
+	/*
+		Send all broadcast messages from here
+	*/
+
+	for {
+		select {
+		case msg := <-kvs.GetBInit:
+			index := msg.index
+			kvs.ReadWriteMap[index] = msg.rw
+			kvs.GetBroad[index] = make(chan string, 500)
+
+		case msg := <-kvs.GetBIndex:
+
+			for _, element := range kvs.ReadWriteMap {
+
+				element.WriteString(msg + "\n")
+				element.Flush()
+
+			}
+
+		}
+
+	}
+}
+
+func (kvs *keyValueServer) GetThread() {
 
 	// fmt.Println("GET")
 	for {
 
 		select {
 
-		case msg := <-kvs.GetMap[index]:
+		case msg := <-kvs.GetMap:
 
 			if msg[:3] == "put" {
 				msg = msg[:len(msg)-1]
@@ -179,18 +221,23 @@ func (kvs *keyValueServer) countR() {
 
 	}
 }
-func (kvs *keyValueServer) GetBThread(index int, rw *bufio.ReadWriter) {
-	for {
 
-		select {
-		case msg := <-kvs.GetBroad[index]:
-			rw.WriteString(msg + "\n")
-			rw.Flush()
+// func (kvs *keyValueServer) GetBThread(index int, rw *bufio.ReadWriter) {
+// 	// add another channel
+// 	return
+// 	for {
 
-		}
-	}
+// 		select {
+// 		case msg := <-kvs.GetBroad[index]:
+// 			rw.WriteString(msg + "\n")
+// 			rw.Flush()
+// 			/*  msg:= <- GetBMsg
+// 			i
+// 			*/
+// 		}
+// 	}
 
-}
+// }
 func (kvs *keyValueServer) ClientConn(conn net.Conn, rw *bufio.ReadWriter, index int) {
 
 	for {
@@ -198,16 +245,12 @@ func (kvs *keyValueServer) ClientConn(conn net.Conn, rw *bufio.ReadWriter, index
 
 		msg, err := rw.ReadString('\n')
 		if err != nil {
-			// fmt.Printf("Client Left")
 			kvs.countchan <- -1
 			return
 		}
-		kvs.GetMap[index] <- msg
-		// It is fine at this point
+		kvs.GetMap <- msg
 
 	}
-
-	// echo back the same message to the client
 
 }
 func (kvs *keyValueServer) ConnectionToRW(conn net.Conn) *bufio.ReadWriter {
@@ -215,10 +258,11 @@ func (kvs *keyValueServer) ConnectionToRW(conn net.Conn) *bufio.ReadWriter {
 }
 
 func (kvs *keyValueServer) StartModel1(port int) error {
-	// TODO: implement this!
-	//Use Kvs
-	//Initiate server
-	//Call a go routine that is listening on the 'port'
+	/* TODO: implement this!
+		- Use Kvs
+		- Initiate server
+	 	- Call a go routine that is listening on the 'port'
+	*/
 	if kvs.close == true {
 
 		return nil
@@ -261,16 +305,54 @@ func (kvs *keyValueServer) StartModel2(port int) error {
 	// such as Close(), StartModel1(), etc. are forbidden for RPCs.
 	//
 	// Example: <sv>.Register(rpcs.Wrap(kvs))
+	if kvs.close == true {
+
+		return nil
+	}
+
+	kvs.port = port
+	var sPort string
+	sPort = ":" + strconv.Itoa(kvs.port)
+	var err error
+	kvs.ln, err = net.Listen("tcp", sPort)
+	if err != nil {
+		// fmt.Printf("Couldn't listen on port %s: %s\n", sPort, err)
+		return err
+	}
+	rpcServer := rpc.NewServer()
+
+	rpcServer.Register(rpcs.Wrap(kvs))
+	http.DefaultServeMux = http.NewServeMux()
+	rpcServer.HandleHTTP(rpc.DefaultRPCPath, rpc.DefaultDebugPath)
+	go http.Serve(kvs.ln, nil)
+	go kvs.RPCGetPut()
 	return nil
 }
+func (kvs *keyValueServer) RPCGetPut() {
 
+	for {
+		select {
+		case key := <-kvs.RPCGetChan:
+			kvs.RPCGetByte <- get(key)
+
+		case msg := <-kvs.RPCPutChan:
+			put(msg.Key, msg.Value)
+
+		}
+	}
+}
 func (kvs *keyValueServer) RecvGet(args *rpcs.GetArgs, reply *rpcs.GetReply) error {
 	// TODO: implement this!
+	kvs.RPCGetChan <- args.Key
+	reply.Value = <-kvs.RPCGetByte
+
 	return nil
 }
 
 func (kvs *keyValueServer) RecvPut(args *rpcs.PutArgs, reply *rpcs.PutReply) error {
 	// TODO: implement this!
+	kvs.RPCPutChan <- *args
+
 	return nil
 }
 
