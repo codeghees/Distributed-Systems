@@ -42,6 +42,7 @@ type keyValueServer struct {
 	RPCGetChan   chan string
 	RPCGetByte   chan []byte
 	RPCPutChan   chan rpcs.PutArgs
+	ChanofChan   chan chan string
 }
 
 // New creates and returns (but does not start) a new KeyValueServer.
@@ -69,7 +70,7 @@ func New() KeyValueServer {
 	ptr.GetBIndex = make(chan string)
 	ptr.RPCGetByte = make(chan []byte)
 	ptr.RPCGetChan = make(chan string)
-	initDB() // initialize Database
+	ptr.ChanofChan = make(chan chan string)
 
 	return ptr
 }
@@ -94,7 +95,7 @@ func (kvs *keyValueServer) ServerHandling() {
 			ptr.rw = rw
 			kvs.GetBInit <- *ptr
 			go kvs.ClientConn(conn, rw, kvs.mapIndex)
-			// go kvs.GetBThread(kvs.mapIndex, rw)
+			go kvs.GetBThread(kvs.mapIndex, rw)
 			kvs.mapIndex = kvs.mapIndex + 1
 
 		}
@@ -161,15 +162,24 @@ func (kvs *keyValueServer) CentralGetBThread() {
 			index := msg.index
 			kvs.ReadWriteMap[index] = msg.rw
 			kvs.GetBroad[index] = make(chan string, 500)
+			kvs.ChanofChan <- kvs.GetBroad[index]
 
 		case msg := <-kvs.GetBIndex:
+			for _, element := range kvs.GetBroad {
+				select {
+				case element <- msg:
+				default:
 
-			for _, element := range kvs.ReadWriteMap {
-
-				element.WriteString(msg + "\n")
-				element.Flush()
+				}
 
 			}
+
+			// for _, element := range kvs.ReadWriteMap {
+
+			// 	element.WriteString(msg + "\n")
+			// 	element.Flush()
+
+			// }
 
 		}
 
@@ -222,22 +232,31 @@ func (kvs *keyValueServer) countR() {
 	}
 }
 
-// func (kvs *keyValueServer) GetBThread(index int, rw *bufio.ReadWriter) {
-// 	// add another channel
-// 	return
-// 	for {
+func (kvs *keyValueServer) GetBThread(index int, rw *bufio.ReadWriter) {
+	// add another channel
+	// return
+	// fmt.Println("X")
+	for {
 
-// 		select {
-// 		case msg := <-kvs.GetBroad[index]:
-// 			rw.WriteString(msg + "\n")
-// 			rw.Flush()
-// 			/*  msg:= <- GetBMsg
-// 			i
-// 			*/
-// 		}
-// 	}
+		select {
+		case tempChan := <-kvs.ChanofChan:
+			for {
+				select {
+				case msg := <-tempChan:
+					rw.WriteString(msg + "\n")
+					rw.Flush()
 
-// }
+				}
+
+			}
+
+			/*  msg:= <- GetBMsg
+			i
+			*/
+		}
+	}
+
+}
 func (kvs *keyValueServer) ClientConn(conn net.Conn, rw *bufio.ReadWriter, index int) {
 
 	for {
@@ -267,6 +286,8 @@ func (kvs *keyValueServer) StartModel1(port int) error {
 
 		return nil
 	}
+	initDB() // initialize Database
+
 	kvs.port = port
 	var sPort string
 	sPort = ":" + strconv.Itoa(kvs.port)
@@ -309,6 +330,7 @@ func (kvs *keyValueServer) StartModel2(port int) error {
 
 		return nil
 	}
+	initDB() // initialize Database
 
 	kvs.port = port
 	var sPort string
