@@ -6,12 +6,12 @@ package pa1
 import (
 	"DS_PA1/rpcs"
 	"bufio"
+	"bytes"
 	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
 	"strconv"
-	"strings"
 )
 
 type broadCast struct {
@@ -20,9 +20,7 @@ type broadCast struct {
 }
 type keyValueServer struct {
 	// TODO: implement this!
-	// Count for connected.
-	// Channels for sending info
-	// Port Number
+
 	count        int
 	port         int
 	close        bool
@@ -131,9 +129,11 @@ func (kvs *keyValueServer) PutGetThread() {
 
 	*/
 	for {
+
 		select {
 		case msg := <-kvs.PutChan:
-			values := strings.Split(msg, ",")
+			// values := strings.Split(msg, ",")
+			values := Mapp(bytes.Split([]byte(msg), []byte(",")), convert)
 			key := values[1]
 			value := values[2]
 			put(key, []byte(value))
@@ -203,7 +203,8 @@ func (kvs *keyValueServer) GetThread() {
 			}
 			if msg[:3] == "get" {
 				msg = msg[:len(msg)-1]
-				values := strings.Split(msg, ",")
+				// values := strings.Split(msg, ",")
+				values := Mapp(bytes.Split([]byte(msg), []byte(",")), convert)
 				key := values[1]
 
 				kvs.GetChan <- key
@@ -379,3 +380,14 @@ func (kvs *keyValueServer) RecvPut(args *rpcs.PutArgs, reply *rpcs.PutReply) err
 }
 
 // TODO: add additional methods/functions below!
+//https://gobyexample.com/collection-functions
+func Mapp(vs [][]byte, f func([]byte) string) []string {
+	vsm := make([]string, len(vs))
+	for i, v := range vs {
+		vsm[i] = f(v)
+	}
+	return vsm
+}
+func convert(temp []byte) string {
+	return string(temp)
+}
