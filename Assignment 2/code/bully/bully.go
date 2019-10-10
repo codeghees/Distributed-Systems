@@ -1,5 +1,12 @@
 package bully
 
+/*
+- I use two boolean variables to keep track of when a leader is being searched for and when an election is called.
+- Two tracking ints are stored to check when an election was called or a leader was pinged. Using these we wait for two rounds to see for appropriate responses
+- Another variable is used to check if a node was crashed by keeping track of last processed round.
+- All communication is done through channels
+
+*/
 // msgType represents the type of messages that can be passed between nodes
 type msgType int
 
@@ -37,7 +44,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 	CheckForLeader := false
 	StartElection := false
 	RoundProcessed := -1
-	// var MsgList []TrackMessage
+
 	for {
 
 		// quit / crash the program
@@ -48,14 +55,10 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 		// start the round
 		roundNum := <-startRound
 		if pid >= leader && RoundProcessed == -1 {
-			// fmt.Println("FAILED NODE ", roundNum, "pid ", pid)
-			// fmt.Println("Sending on Election Channel by - ", pid, "Leader = ", leader)
-			// electionResult <- leader
 			for _, ch := range comm {
-				// if index != pid {
+
 				ch <- Message{pid, roundNum, LEADER}
 
-				// }
 			}
 
 		}
@@ -64,7 +67,6 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 			CheckForLeader = true
 			comm[leader] <- Message{pid, roundNum, ALIVE}
 			LastRoundL = roundNum
-			// fmt.Println("Checking leader by pid = ", pid, "at Round ", roundNum)
 
 			// SEND LEADER THE MESSAGE
 		default:
@@ -73,7 +75,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 		for i := range MsgList {
 			NewMsg := MsgList[i]
 			if NewMsg.Type == LEADER {
-				// fmt.Println("NEW LEADER ", roundNum, pid)
+
 				leader = NewMsg.Pid
 				electionResult <- leader
 				StartElection = false
@@ -93,7 +95,6 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 				if StartElection != true {
 					StartElection = true
 					LastRoundE = roundNum
-					// fmt.Println("Election message Received by ", pid, " Sent by ", NewMsg.Pid)
 					for index, ch := range comm {
 						if index > pid {
 							ch <- Message{pid, roundNum, ELECTION}
@@ -103,8 +104,6 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 
 				}
 
-				// CheckForLeader = true
-				// LastRoundL = roundNum
 			}
 		}
 
@@ -120,7 +119,6 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 					}
 				}
 				if CheckForLeader == true {
-					// fmt.Println("LEADER DEAD ", roundNum, "thread = ", pid)
 					StartElection = true
 					LastRoundE = roundNum
 					for index, ch := range comm {
@@ -129,14 +127,13 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 
 						}
 					}
-					// fmt.Println("Starting Elec ", roundNum, "thread = ", pid, "LASTROUNDE = ", LastRoundE)
+
 				}
 
 			}
 		}
-		// fmt.Println("Last Round E = ", LastRoundE, " pid ", pid)
 		if StartElection == true && LastRoundE+2 == roundNum {
-			// fmt.Println("Election! ", roundNum, LastRoundE, "pid ", pid)
+
 			for index := range comm {
 
 				if index > pid {
@@ -155,26 +152,18 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 
 			}
 			if StartElection == true {
-				// fmt.Println("PID = ", pid)
-				electionResult <- pid
 				leader = pid
-				// fmt.Println("Sending on Election Channel by ", pid, "Leader = ", leader)
 
-				for index, channel := range comm {
-					if index != pid {
+				for _, channel := range comm {
 
-						channel <- Message{pid, roundNum, LEADER}
-
-					}
+					channel <- Message{pid, roundNum, LEADER}
 
 				}
 				StartElection = false
-				// CheckForLeader = false
 
 			}
 
 		}
-		// fmt.Println("Round ", roundNum, "Leader = ", leader, "node = ", pid)
 		RoundProcessed = roundNum
 		// TODO: bully algorithm code
 	}
