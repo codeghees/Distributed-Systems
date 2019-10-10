@@ -1,7 +1,5 @@
 package bully
 
-import "fmt"
-
 // msgType represents the type of messages that can be passed between nodes
 type msgType int
 
@@ -50,14 +48,14 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 		// start the round
 		roundNum := <-startRound
 		if pid >= leader && RoundProcessed == -1 {
-			fmt.Println("FAILED NODE ", roundNum, "pid ", pid)
-			fmt.Println("Sending on Election Channel by - ", pid, "Leader = ", leader)
-			electionResult <- leader
-			for index, ch := range comm {
-				if index != pid {
-					ch <- Message{pid, roundNum, LEADER}
+			// fmt.Println("FAILED NODE ", roundNum, "pid ", pid)
+			// fmt.Println("Sending on Election Channel by - ", pid, "Leader = ", leader)
+			// electionResult <- leader
+			for _, ch := range comm {
+				// if index != pid {
+				ch <- Message{pid, roundNum, LEADER}
 
-				}
+				// }
 			}
 
 		}
@@ -66,7 +64,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 			CheckForLeader = true
 			comm[leader] <- Message{pid, roundNum, ALIVE}
 			LastRoundL = roundNum
-			fmt.Println("Checking leader by pid = ", pid, "at Round ", roundNum)
+			// fmt.Println("Checking leader by pid = ", pid, "at Round ", roundNum)
 
 			// SEND LEADER THE MESSAGE
 		default:
@@ -75,7 +73,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 		for i := range MsgList {
 			NewMsg := MsgList[i]
 			if NewMsg.Type == LEADER {
-				fmt.Println("NEW LEADER ", roundNum, pid)
+				// fmt.Println("NEW LEADER ", roundNum, pid)
 				leader = NewMsg.Pid
 				electionResult <- leader
 				StartElection = false
@@ -122,7 +120,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 					}
 				}
 				if CheckForLeader == true {
-					fmt.Println("LEADER DEAD ", roundNum, "thread = ", pid)
+					// fmt.Println("LEADER DEAD ", roundNum, "thread = ", pid)
 					StartElection = true
 					LastRoundE = roundNum
 					for index, ch := range comm {
@@ -160,7 +158,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 				// fmt.Println("PID = ", pid)
 				electionResult <- pid
 				leader = pid
-				fmt.Println("Sending on Election Channel by ", pid, "Leader = ", leader)
+				// fmt.Println("Sending on Election Channel by ", pid, "Leader = ", leader)
 
 				for index, channel := range comm {
 					if index != pid {
@@ -176,7 +174,7 @@ func Bully(pid int, leader int, checkLeader chan bool, comm map[int]chan Message
 			}
 
 		}
-		fmt.Println("Round ", roundNum, "Leader = ", leader, "node = ", pid)
+		// fmt.Println("Round ", roundNum, "Leader = ", leader, "node = ", pid)
 		RoundProcessed = roundNum
 		// TODO: bully algorithm code
 	}
