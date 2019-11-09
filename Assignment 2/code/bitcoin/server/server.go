@@ -1,7 +1,15 @@
 package main
 
+/*
+- I use two channels, one for active miners, the other for active jobs.
+- When a job is active, it activates the scheduler thread which in turn waits for an active miner, if an active miner is found it fragments the jobs
+and sends it in a newly spawned go routine. A result handler is spawned and waits for all the slices to return and send result back to client.
+If miner fails, job is inserted back into channel, if it is finished miner is inserted back.
+
+*/
 import (
 	"bitcoin"
+	"container/heap"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +22,27 @@ import (
 
 type server struct {
 	listener net.Listener
+}
+
+// JobHeap ensures fairness
+type JobHeap []JobStruct
+
+func (h JobHeap) Len() int           { return len(h) }
+func (h JobHeap) Less(i, j int) bool { return h[i].slices < h[j].slices }
+func (h JobHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+// Push appends in Heap
+func (h *JobHeap) Push(x interface{}) {
+	*h = append(*h, x.(JobStruct))
+}
+
+// Pop removes in Heap
+func (h *JobHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
 }
 
 // ErrorStruct is used for incomplete jobs
@@ -62,6 +91,9 @@ var JobChan chan JobStruct
 // SortedJobChan keeps track of jobs in terms of size
 var SortedJobChan chan JobStruct
 
+// SmallJobChan keeps track of small requests
+var SmallJobChan chan JobStruct
+
 func main() {
 	// You may need a logger for debug purpose
 	const (
@@ -85,7 +117,7 @@ func main() {
 	MinerChan = make(chan MinerStruct, 500)
 	JobChan = make(chan JobStruct, 500)
 	SortedJobChan = make(chan JobStruct, 500)
-
+	SmallJobChan = make(chan JobStruct, 500)
 	go JobSort(SortedJobChan)
 	go Scheduler(SortedJobChan)
 	const numArgs = 2
@@ -101,7 +133,7 @@ func main() {
 	}
 
 	srv, err := startServer(port)
-	LOGF.Println("Server Started \n")
+	LOGF.Println("Server Started! ")
 
 	if err != nil {
 		fmt.Println(err.Error())
@@ -145,6 +177,7 @@ func main() {
 			Client := JobStruct{ConnMsg, conn, nClients, slices}
 
 			JobChan <- Client
+
 			LOGF.Println("JD -- >", Client)
 		}
 
@@ -155,11 +188,16 @@ func main() {
 func JobSort(SortedJobChan chan JobStruct) {
 	// Implement PQ
 	// LOGF.Println("JobSort")
-
+	h := &JobHeap{}
+	heap.Init(h)
 	for {
 		select {
 		case job := <-JobChan:
+			heap.Push(h, job)
+			SortedJobChan <- heap.Pop(h).(JobStruct)
+			// fmt.Println()
 
+		case job := <-SmallJobChan:
 			SortedJobChan <- job
 
 		}
@@ -270,11 +308,11 @@ func ResultHandler(Result chan bitcoin.Message, Job JobStruct, CompleteJob chan 
 //ExecuteJob connects with Miner and sends result
 func ExecuteJob(Miner MinerStruct, Lower uint64, Upper uint64, Result chan bitcoin.Message, Error chan ErrorStruct, Job bitcoin.Message) {
 	/*
-		- Connect with Miner and send job - DONE
-		- Wait for Result DONE
-		- Send Result on Result channel DONE
-		- Reinsert Miner if job finished!!! DONE
-		- if Miner fails, terminate thread, send err back to channel. DONE
+		- Connect with Miner and send job -
+		- Wait for Result
+		- Send Result on Result channel
+		- Reinsert Miner if job finished
+		- if Miner fails, terminate thread, send err back to channel.
 	*/
 
 	//Sending Job
