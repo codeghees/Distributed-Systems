@@ -1,0 +1,47 @@
+01:34:33.055468 paxos_impl.go:101: Replacement Node dialing  2
+01:34:33.057143 paxos_impl.go:101: Replacement Node dialing  3
+01:34:33.058371 paxos_impl.go:101: Replacement Node dialing  4
+01:34:33.059896 paxos_impl.go:101: Replacement Node dialing  0
+01:34:33.060543 paxos_impl.go:142: map[abc11:3375191488 abc12:561013451 abc13:2929185396 abc14:735438653 abc15:398249502]
+058237 paxos_impl.go:478: DIALED
+01:34:33.060389 paxos_impl.go:495: Sending Marshal back
+r:  abc11 3375191488  to :  1
+01:34:32.170895 paxos_impl.go:298: Sending Commit for:  abc11 3375191488  to :  2
+01:34:32.171840 paxos_impl.go:298: Sending Commit for:  abc11 3375191488  to :  3
+01:34:32.175942 paxos_impl.go:180: localhost:10256  is Proposing:  4294967296  For key:  abc12  with value:  561013451
+01:34:32.176311 paxos_impl.go:216: Got a Promise:  -1 <nil> 1
+01:34:32.176785 paxos_impl.go:298: Sending Commit for:  abc12 561013451  to :  1
+01:34:32.177031 paxos_impl.go:298: Sending Commit for:  abc12 561013451  to :  2
+01:34:32.177286 paxos_impl.go:298: Sending Commit for:  abc12 561013451  to :  3
+01:34:32.177508 paxos_impl.go:298: Sending Commit for:  abc12 561013451  to :  4
+01:34:32.177767 paxos_impl.go:298: Sending Commit for:  abc12 561013451  to :  0
+01:34:32.378749 paxos_impl.go:442: Committing:  abc12 561013451
+01:34:32.384226 paxos_impl.go:180: localhost:10256  is Proposing:  4294967296  For key:  abc13  with value:  2929185396
+01:34:32.385276 paxos_impl.go:216: Got a Promise:  -1 <nil> 1
+01:34:32.386032 paxos_impl.go:298: Sending Commit for:  abc13 2929185396  to :  0
+01:34:32.587205 paxos_impl.go:442: Committing:  abc13 2929185396
+01:34:32.587770 paxos_impl.go:298: Sending Commit for:  abc13 2929185396  to :  1
+01:34:32.588317 paxos_impl.go:298: Sending Commit for:  abc13 2929185396  to :  2
+01:34:32.588786 paxos_impl.go:298: Sending Commit for:  abc13 2929185396  to :  3
+01:34:32.589305 paxos_impl.go:298: Sending Commit for:  abc13 2929185396  to :  4
+01:34:32.591704 paxos_impl.go:180: localhost:10256  is Proposing:  4294967296  For key:  abc14  with value:  735438653
+01:34:32.592066 paxos_impl.go:216: Got a Promise:  -1 <nil> 1
+01:34:32.592501 paxos_impl.go:298: Sending Commit for:  abc14 735438653  to :  0
+01:34:32.793399 paxos_impl.go:442: Committing:  abc14 735438653
+01:34:32.794247 paxos_impl.go:298: Sending Commit for:  abc14 735438653  to :  1
+01:34:32.795243 paxos_impl.go:298: Sending Commit for:  abc14 735438653  to :  2
+01:34:32.796151 paxos_impl.go:298: Sending Commit for:  abc14 735438653  to :  3
+01:34:32.797159 paxos_impl.go:298: Sending Commit for:  abc14 735438653  to :  4
+01:34:32.803431 paxos_impl.go:180: localhost:10256  is Proposing:  4294967296  For key:  abc15  with value:  398249502
+01:34:32.804645 paxos_impl.go:216: Got a Promise:  -1 <nil> 1
+01:34:32.805583 paxos_impl.go:298: Sending Commit for:  abc15 398249502  to :  2
+01:34:32.806639 paxos_impl.go:298: Sending Commit for:  abc15 398249502  to :  3
+01:34:32.807565 paxos_impl.go:298: Sending Commit for:  abc15 398249502  to :  4
+01:34:32.808435 paxos_impl.go:298: Sending Commit for:  abc15 398249502  to :  0
+01:34:33.009821 paxos_impl.go:442: Committing:  abc15 398249502
+01:34:33.010766 paxos_impl.go:298: Sending Commit for:  abc15 398249502  to :  1
+01:34:33.059621 paxos_impl.go:464: Dialing
+01:34:33.059641 paxos_impl.go:478: DIALED
+_impl.go:478: DIALED
+7 paxos_impl.go:495: Sending Marshal back
+ Marshal back

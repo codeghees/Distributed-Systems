@@ -4,6 +4,7 @@ import (
 	"paxosapp/rpc/paxosrpc"
 )
 
+// PaxosNode description
 // GetNextProposalNumber generates a proposal number which will be passed to Propose.
 // Propose initializes proposing a value for a key, and replies with the value that was committed for that key.
 // GetValue looks up the value for a key, and replies with the value or with KeyNotFound.
