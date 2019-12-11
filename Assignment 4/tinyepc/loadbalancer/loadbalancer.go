@@ -1,8 +1,6 @@
 package loadbalancer
 
 import (
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -14,19 +12,31 @@ import (
 
 const maxUint64 = ^uint64(0)
 
+/*
+Roll No: 20100093-20100286
+IMPLEMENTATION DETAILS:
+	- Once the LoadBalancer starts, it listens to all MME joins and recomputes the state and replicas for the system; it sends back the state/replicas to MMEs.
+	- Successors are found using the sorted HashList we have maintained.
+	- We have an RPC map for all MMEs used to call respective functions.
+
+*/
 type loadBalancer struct {
 	// TODO: Implement this!
-	ringNodes     int
-	physicalNodes int
-	allHashes     []uint64
-	serverNames   []string
-	ringWeight    int
-	hashring      map[uint64]string // Stores MME hashes and their addresses
-	replicas      map[uint64]uint64
+	ringNodes     int                       // Total Number of nodes
+	physicalNodes int                       // Total number of Physical nodes
+	allHashes     []uint64                  // Sorted list of all Hashes
+	serverNames   []string                  // HostPort strings of all Hashes
+	ringWeight    int                       // Weight of a ring
+	hashring      map[uint64]string         // Stores MME hashes and their addresses
+	virtualNodes  map[string][]uint64       // Stores all virtual node hashes for a physical node
+	replicas      map[string]map[string]int // Map of HostPort: Replicas
+	hashes        map[uint64]bool           // Truth Map of Hashes generated
 	hasher        *ConsistentHashing
 	stateMutex    *sync.Mutex
-	virtualNodes  map[string]int
-	nodes         map[uint64]*rpc.Client
+	nodes         map[uint64]*rpc.Client // RPC client of all nodes of Phy+Virtual nodes
+	phyNodes      map[uint64]*rpc.Client // RPC Client of all physical nodes
+	hostport      string
+	ln            net.Listener
 }
 
 // New returns a new instance of LoadBalancer, but does not start it
@@ -36,19 +46,24 @@ func New(ringWeight int) LoadBalancer {
 	lb.ringWeight = ringWeight
 	lb.hasher = new(ConsistentHashing)
 	lb.hashring = make(map[uint64]string)
-	lb.replicas = make(map[uint64]uint64)
+	lb.virtualNodes = make(map[string][]uint64)
+	lb.replicas = make(map[string]map[string]int)
 	lb.hasher.max = maxUint64
 	lb.stateMutex = new(sync.Mutex)
 	lb.nodes = make(map[uint64]*rpc.Client)
+	lb.phyNodes = make(map[uint64]*rpc.Client)
+	lb.hashes = make(map[uint64]bool)
 	return lb
 }
 
 func (lb *loadBalancer) StartLB(port int) error {
-	// TODO: Implement this!
+	// - Starts the Server
 	rpcLB := rpcs.WrapLoadBalancer(lb)
 	rpc.Register(rpcLB)
 	rpc.HandleHTTP()
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	lb.hostport = ":" + strconv.Itoa(port)
+	ln, err := net.Listen("tcp", lb.hostport)
+	lb.ln = ln
 	if err != nil {
 		return err
 	}
@@ -57,6 +72,7 @@ func (lb *loadBalancer) StartLB(port int) error {
 }
 
 func (lb *loadBalancer) Close() {
+	lb.ln.Close()
 	// TODO: Implement this!
 }
 
@@ -67,62 +83,246 @@ func (lb *loadBalancer) RecvUERequest(args *rpcs.UERequestArgs, reply *rpcs.UERe
 	args.UserID = userHash
 
 	lb.stateMutex.Lock()
-
-	lb.sortHashes()
-	if userHash > lb.allHashes[lb.ringNodes-1] || userHash <= lb.allHashes[0] {
-		err := lb.nodes[lb.allHashes[0]].Call("MME.RecvUERequest", args, reply)
-		if err != nil {
-			fmt.Println(err)
-		}
-	} else {
-		for _, id := range lb.allHashes {
-			if id > userHash {
-				err := lb.nodes[id].Call("MME.RecvUERequest", args, reply)
-				if err != nil {
-					fmt.Println(err)
-				}
-				break
-			}
-		}
-	}
+	owner := lb.FindSuccessor(userHash)
+	lb.nodes[owner].Call("MME.RecvUERequest", args, reply)
 	lb.stateMutex.Unlock()
 	return nil
 }
 
 func (lb *loadBalancer) RecvLeave(args *rpcs.LeaveArgs, reply *rpcs.LeaveReply) error {
 	// TODO: Implement this!
-	return errors.New("RecvLeave() not implemented")
+	lb.stateMutex.Lock()
+	completeState := make(map[uint64]rpcs.MMEState)
+	for _, mme := range lb.allHashes {
+		sendStateArgs := rpcs.SendStateArgs{}
+		sendStateReply := rpcs.SendStateReply{}
+		sendStateArgs.LBHostport = lb.hostport
+
+		lb.nodes[mme].Call("MME.SendState", &sendStateArgs, &sendStateReply)
+
+		for k, v := range sendStateReply.State {
+			completeState[k] = v
+		}
+	}
+
+	DeleteMMEHash := lb.virtualNodes[args.HostPort]
+	DeleteMMEHash = append(DeleteMMEHash, lb.hasher.Hash(args.HostPort))
+	var newhashlist []uint64
+	for i := 0; i < len(lb.allHashes); i++ {
+		Delete := false
+		for j := 0; j < len(DeleteMMEHash); j++ {
+			if lb.allHashes[i] == DeleteMMEHash[j] {
+				Delete = true
+				lb.ringNodes--
+				_, exists := lb.phyNodes[DeleteMMEHash[j]]
+				if exists {
+					lb.physicalNodes--
+					delete(lb.phyNodes, DeleteMMEHash[j])
+				}
+				break
+			}
+		}
+		if Delete == false {
+			newhashlist = append(newhashlist, lb.allHashes[i])
+		}
+
+	}
+
+	lb.allHashes = newhashlist
+	lb.sortHashes()
+	//__________________RECOMPUTE replicas___________________//
+
+	for _, mmeHash := range lb.allHashes {
+		mmeAddress := lb.hashring[mmeHash]
+		mmeReplicaHash := lb.FindSuccessor(mmeHash)
+		mmeReplicaAddress := lb.hashring[mmeReplicaHash]
+		lb.replicas[mmeAddress] = make(map[string]int)
+		if lb.physicalNodes > 1 {
+			for {
+				if mmeAddress == mmeReplicaAddress && (mmeAddress != args.HostPort) {
+					mmeReplicaHash = lb.FindSuccessor(mmeReplicaHash)
+					mmeReplicaAddress = lb.hashring[mmeReplicaHash]
+				} else {
+					lb.replicas[mmeAddress][mmeReplicaAddress] = 1
+					break
+				}
+			}
+
+		}
+	}
+
+	//________________RECOMPUTE REPLICAS_____________________//
+	for k, v := range completeState {
+		ownerMME := lb.FindSuccessor(k)
+		mmeReplicas := lb.replicas[lb.hashring[ownerMME]]
+		recvStateArgs := rpcs.RecvStateArgs{}
+		recvStateArgs.Key = k
+		recvStateArgs.Val = v
+		recvStateReply := rpcs.RecvStateReply{}
+		var updatedReplicas []string
+		for k := range mmeReplicas {
+			updatedReplicas = append(updatedReplicas, k)
+		}
+		recvStateArgs.Replicas = updatedReplicas
+		updatedReplicas = nil
+
+		lb.nodes[ownerMME].Call("MME.RecvState", &recvStateArgs, &recvStateReply)
+	}
+	lb.stateMutex.Unlock()
+	return nil
 }
 
 func (lb *loadBalancer) RecvMMEJoin(args *rpcs.MMEJoinArgs, reply *rpcs.MMEJoinReply) error {
 	lb.stateMutex.Lock()
-
 	lb.ringNodes++
 	lb.physicalNodes++
+	var replicas []string
 	lb.serverNames = append(lb.serverNames, args.Address)
 	hash := lb.hasher.Hash(args.Address)
+	lb.replicas[args.Address] = make(map[string]int)
+
 	lb.allHashes = append(lb.allHashes, hash)
+	lb.hashes[hash] = true
+	lb.hashring[hash] = args.Address
 
 	client, dialError := rpc.DialHTTP("tcp", args.Address)
 	if dialError != nil {
 		return dialError
 	}
+
 	lb.nodes[hash] = client
-	lb.hashring[hash] = args.Address
-	replicaAddress := lb.getBackupAddress(hash)
-	reply.BackupAddress = replicaAddress
-	reply.BackupHash = lb.hasher.Hash(replicaAddress)
-	lb.replicas[hash] = reply.BackupHash
+	lb.phyNodes[hash] = client
+
+	// Update current MMEs replicas
+	if lb.physicalNodes > 1 {
+		physicalReplicaID := lb.FindSuccessor(hash)
+		physicalReplicaAddress := lb.hashring[physicalReplicaID]
+
+		for {
+			if physicalReplicaAddress == args.Address {
+				physicalReplicaID = lb.FindSuccessor(physicalReplicaID)
+				physicalReplicaAddress = lb.hashring[physicalReplicaID]
+			} else {
+				lb.replicas[args.Address][physicalReplicaAddress] = 1
+
+				break
+			}
+		}
+	}
 
 	for i := 1; i < lb.ringWeight; i++ {
 		lb.ringNodes++
 		vNodeHash := lb.hasher.VirtualNodeHash(args.Address, i)
 		lb.allHashes = append(lb.allHashes, vNodeHash)
+		lb.hashes[vNodeHash] = true
 		lb.hashring[vNodeHash] = args.Address
 		lb.nodes[vNodeHash] = client
-	}
-	reply.Hash = hash
 
+		virtualReplicaID := lb.FindSuccessor(vNodeHash)
+		virtualReplicaAddress := lb.hashring[virtualReplicaID]
+		// Update current MMEs replicas
+		if lb.physicalNodes > 1 {
+			for {
+				if virtualReplicaAddress == args.Address {
+					virtualReplicaID = lb.FindSuccessor(virtualReplicaID)
+					virtualReplicaAddress = lb.hashring[virtualReplicaID]
+				} else {
+					lb.replicas[args.Address][virtualReplicaAddress] = 1
+
+					break
+				}
+			}
+		}
+		lb.virtualNodes[args.Address] = append(lb.virtualNodes[args.Address], vNodeHash)
+	}
+
+	// Update all replicas
+	var ReplicaMap map[string][]string
+	ReplicaMap = make(map[string][]string)
+	for _, mmeHash := range lb.allHashes {
+		mmeAddress := lb.hashring[mmeHash]
+		mmeReplicaHash := lb.FindSuccessor(mmeHash)
+		mmeReplicaAddress := lb.hashring[mmeReplicaHash]
+		if len(lb.virtualNodes[mmeAddress]) == 0 {
+			lb.replicas[mmeAddress] = make(map[string]int)
+		}
+		if lb.physicalNodes > 1 {
+			for {
+				if mmeAddress == mmeReplicaAddress {
+					mmeReplicaHash = lb.FindSuccessor(mmeReplicaHash)
+					mmeReplicaAddress = lb.hashring[mmeReplicaHash]
+				} else {
+					lb.replicas[mmeAddress][mmeReplicaAddress] = 1
+					ReplicaMap[mmeAddress] = lb.CheckDuplicates(ReplicaMap[mmeAddress], mmeReplicaAddress, args.Address)
+					break
+				}
+			}
+
+		}
+	}
+
+	for k := range lb.replicas[args.Address] {
+		replicas = append(replicas, k)
+	}
+
+	reply.Hash = hash
+	reply.Replicas = replicas
+
+	// Get state from all MMEs
+	completeState := make(map[uint64]rpcs.MMEState)
+	for _, mme := range lb.phyNodes {
+		sendStateArgs := rpcs.SendStateArgs{}
+		sendStateReply := rpcs.SendStateReply{}
+		sendStateArgs.LBHostport = lb.hostport
+
+		mme.Call("MME.SendState", &sendStateArgs, &sendStateReply)
+		for k, v := range sendStateReply.State {
+			completeState[k] = v
+		}
+	}
+
+	// Recompute State for all MMEs and send it to them
+
+	var updatedReplicas []string
+	if len(completeState) == 0 {
+		for k := 0; k < len(lb.allHashes); k++ {
+
+			ownerMME := lb.FindSuccessor(lb.allHashes[k])
+			mmeReplicas := lb.replicas[lb.hashring[ownerMME]]
+			for k := range mmeReplicas {
+				updatedReplicas = append(updatedReplicas, k)
+			}
+			recvStateArgs := rpcs.SendReplicaArgs{}
+
+			recvStateArgs.Replicas = updatedReplicas
+
+			recvStateReply := rpcs.SendReplicaReply{}
+			lb.nodes[ownerMME].Call("MME.RecvReplica", &recvStateArgs, &recvStateReply)
+
+			updatedReplicas = nil
+
+		}
+
+	}
+
+	for k, v := range completeState {
+
+		ownerMME := lb.FindSuccessor(k)
+		mmeReplicas := lb.replicas[lb.hashring[ownerMME]]
+		// var replicas []string
+		for k := range mmeReplicas {
+			updatedReplicas = append(updatedReplicas, k)
+		}
+		recvStateArgs := rpcs.RecvStateArgs{}
+
+		recvStateArgs.Replicas = updatedReplicas
+		recvStateArgs.Key = k
+		recvStateArgs.Val = v
+		recvStateReply := rpcs.RecvStateReply{}
+
+		lb.nodes[ownerMME].Call("MME.RecvState", &recvStateArgs, &recvStateReply)
+		updatedReplicas = nil
+	}
 	lb.stateMutex.Unlock()
 	return nil
 }
@@ -140,36 +340,62 @@ func (lb *loadBalancer) RecvMMEJoin(args *rpcs.MMEJoinArgs, reply *rpcs.MMEJoinR
 func (lb *loadBalancer) RecvLBStats(args *rpcs.LBStatsArgs, reply *rpcs.LBStatsReply) error {
 	// TODO: Implement this!
 	lb.stateMutex.Lock()
-
 	lb.sortHashes()
 	reply.Hashes = lb.allHashes
 	reply.PhysicalNodes = lb.physicalNodes
 	reply.RingNodes = lb.ringNodes
-	reply.ServerNames = lb.serverNames
+	var Nodes []string
+	for i := 0; i < len(lb.allHashes); i++ {
+		checkPhyNode := false
+		for k := range lb.phyNodes {
+			if k == lb.allHashes[i] {
+				checkPhyNode = true
+				break
+			}
 
+		}
+		if checkPhyNode == true {
+			Nodes = append(Nodes, lb.hashring[lb.allHashes[i]])
+		}
+	}
+	reply.ServerNames = Nodes
 	lb.stateMutex.Unlock()
 	return nil
 }
 
-// TODO: add additional methods/functions below!
-func (lb *loadBalancer) getBackupAddress(id uint64) string {
-	var address string
-	lb.sortHashes()
-	if id >= lb.allHashes[lb.ringNodes-1] {
-		address = lb.hashring[lb.allHashes[0]]
-	} else {
-		var backupHash uint64
-		for _, v := range lb.allHashes {
-			if v > id {
-				backupHash = v
-				break
-			}
-		}
-		address = lb.hashring[backupHash]
-	}
-	return address
-}
-
 func (lb *loadBalancer) sortHashes() {
 	sort.Slice(lb.allHashes, func(i, j int) bool { return lb.allHashes[i] < lb.allHashes[j] })
+}
+func (lb *loadBalancer) FindSuccessor(hash uint64) uint64 {
+	lb.sortHashes()
+	numHashes := lb.ringNodes
+	for i := 0; i < numHashes; i++ {
+		if lb.allHashes[i] > hash {
+			return lb.allHashes[i]
+		}
+	}
+	return lb.allHashes[0]
+}
+
+func (lb *loadBalancer) FindPred(hash uint64) uint64 {
+	numHashes := lb.ringNodes
+	for i := numHashes - 1; i >= 0; i-- {
+		if lb.allHashes[i] < hash {
+			return lb.allHashes[i]
+		}
+	}
+	return lb.allHashes[numHashes-1]
+}
+func (lb *loadBalancer) CheckDuplicates(list []string, item string, item2 string) []string {
+	if item == item2 {
+		return list
+	}
+	for i := 0; i < len(list); i++ {
+		if list[i] == item {
+			return list
+		}
+	}
+
+	list = append(list, item)
+	return list
 }

@@ -5,6 +5,10 @@ type RemoteMME interface {
 	RecvUERequest(args *UERequestArgs, reply *UERequestReply) error
 	RecvMMEStats(args *MMEStatsArgs, reply *MMEStatsReply) error
 	// TODO: add additional RPC signatures below!
+	// RecvOrderStateTransfer(args *TransferStateArgs, reply *TransferStateReply) error
+	RecvState(args *RecvStateArgs, reply *RecvStateReply) error
+	SendState(args *SendStateArgs, reply *SendStateReply) error
+	RecvReplica(args *SendReplicaArgs, reply *SendReplicaReply) error
 }
 
 // RemoteLoadBalancer - Students should not use this interface in their code. Use WrapLB() instead.

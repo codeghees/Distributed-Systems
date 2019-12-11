@@ -11,6 +11,64 @@ type MMEState struct {
 
 // TODO: add additional argument/reply structs here!
 
+// MMEJoinArgs contains the arguments to pass to the MMEJoin RPC call
+type MMEJoinArgs struct {
+	Address string
+}
+
+// MMEJoinReply contains the reply from the Load Balancer to the MMEJoin RPC call
+type MMEJoinReply struct {
+	Hash          uint64              // Hash value for the new MME
+	Replicas      []string            // Adress of the MME that is chosen to be the backup for the new MME
+	ReplicaHashes []uint64            // Hashed value of the backup MME
+	MMEState      map[uint64]MMEState //Relocated MME State
+}
+
+//TransferStateArgs contains information sent to an existing MME about a new MME that will be now responsible for some of its keys. Sent from LB to MME
+type TransferStateArgs struct {
+	NewMMEHash    uint64 // The hash for the new MME
+	NewMMEAddress string // The address of the new MME
+	MinHash       uint64 // The minimum hash value from where the state should be transferred
+	MaxRingHash   uint64
+	MinRingHash   uint64
+	PrevMin       uint64
+	PrevMax       uint64
+}
+
+//TransferStateReply contains the reply to a transfer state order from the LB
+type TransferStateReply struct {
+}
+
+//RecvStateArgs contains the MME state that will be sent from an existing MME to a new MME
+type RecvStateArgs struct {
+	Key      uint64
+	Val      MMEState
+	Replicas []string
+}
+
+//RecvStateReply is the reply to a inter MME state transfer
+type RecvStateReply struct {
+}
+
+//SendStateArgs contains the MME state that will be sent from MME to LB
+type SendStateArgs struct {
+	LBHostport string
+}
+
+//SendStateReply is the reply to a inter MME state transfer
+type SendStateReply struct {
+	State map[uint64]MMEState
+}
+
+//SendReplicaArgs used to send replicas
+type SendReplicaArgs struct {
+	Replicas []string
+}
+
+//SendReplicaReply placeholder
+type SendReplicaReply struct {
+}
+
 // ========= DO NOT MODIFY ANYTHING BEYOND THIS LINE! =========
 
 // Operation represents the different kinds of user operations (Call, SMS or Load)
@@ -58,18 +116,6 @@ type LBStatsReply struct {
 	PhysicalNodes int      // Total number of physical nodes ONLY in the ring
 	Hashes        []uint64 // Sorted List of all the nodes'(physical + virtual) hashes
 	ServerNames   []string // List of all the physical nodes' hostPort string as they appear in the hash ring
-}
-
-// MMEJoinArgs contains the arguments to pass to the MMEJoin RPC call
-type MMEJoinArgs struct {
-	Address string
-}
-
-// MMEJoinReply contains the reply from the Load Balancer to the MMEJoin RPC call
-type MMEJoinReply struct {
-	Hash          uint64 // Hash value for the new MME
-	BackupAddress string // Adress of the MME that is chosen to be the backup for the new MME
-	BackupHash    uint64 // Hashed value of the backup MME
 }
 
 // MMEStatsArgs contains the return value for MME.RecvMMEStats RPC

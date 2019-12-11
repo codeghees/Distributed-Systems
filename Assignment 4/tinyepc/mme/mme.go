@@ -1,20 +1,20 @@
 package mme
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
+	"sort"
 	"sync"
 	"tinyepc/rpcs"
 )
+
+const maxHash = ^uint64(0)
 
 type mme struct {
 	// TODO: Implement this!
 	state      map[uint64]rpcs.MMEState // Stores the net balance for
 	myID       uint64                   // Hash assigned to MME from the LB
-	myBackup   *rpc.Client              // Connection to the MME that is acting as a backup
-	backupID   uint64                   // Hash assigned to MME's backup from the LB
 	replicas   []string                 // List of ports for this MME's replicas
 	numServed  int                      // Number of requests served so far
 	stateMutex *sync.Mutex
@@ -40,14 +40,12 @@ func New() MME {
 func (m *mme) Close() {
 	// TODO: Implement this!
 	m.stateMutex.Lock()
-	fmt.Println("CLOSE MME")
-
-	m.ln.Close()
+	// m.ln.Close()
 	m.stateMutex.Unlock()
 }
 
 func (m *mme) StartMME(hostPort string, loadBalancer string) error {
-	// TODO: Implement this!
+	//  Starts MME
 	rpcMME := rpcs.WrapMME(m)
 	rpc.Register(rpcMME)
 	rpc.HandleHTTP()
@@ -68,20 +66,14 @@ func (m *mme) StartMME(hostPort string, loadBalancer string) error {
 
 	client.Call("LoadBalancer.RecvMMEJoin", &joinArgs, &joinReply)
 	m.myID = joinReply.Hash
-	backup, backupDialError := rpc.DialHTTP("tcp", joinReply.BackupAddress)
-	if backupDialError != nil {
-		return backupDialError
-	}
-	m.myBackup = backup
-	m.backupID = joinReply.BackupHash
-	m.replicas = append(m.replicas, joinReply.BackupAddress)
+	m.replicas = joinReply.Replicas
 	m.hostport = hostPort
 	m.ln = ln
 	return nil
 }
 
 func (m *mme) RecvUERequest(args *rpcs.UERequestArgs, reply *rpcs.UERequestReply) error {
-	// TODO: Implement this!
+	// Processes UE Request
 	user := args.UserID
 	req := args.UEOperation
 
@@ -94,8 +86,39 @@ func (m *mme) RecvUERequest(args *rpcs.UERequestArgs, reply *rpcs.UERequestReply
 		m.state[user] = rpcs.MMEState{Balance: 100 + float64(operationCosts[req])}
 	}
 	m.stateMutex.Unlock()
-	// fmt.Println("MME ID = ", m.myID, "UID = ", user)
 
+	return nil
+}
+func (m *mme) RecvReplica(args *rpcs.SendReplicaArgs, reply *rpcs.SendReplicaReply) error {
+	//Receives replicas from LoadBalancer
+	m.stateMutex.Lock()
+	m.replicas = nil
+	m.replicas = args.Replicas
+	m.stateMutex.Unlock()
+	return nil
+}
+
+func (m *mme) RecvState(args *rpcs.RecvStateArgs, reply *rpcs.RecvStateReply) error {
+	//Receives state from LoadBalancer
+	m.stateMutex.Lock()
+
+	m.state[args.Key] = args.Val
+
+	m.replicas = nil
+	m.replicas = args.Replicas
+	m.stateMutex.Unlock()
+	return nil
+}
+
+func (m *mme) SendState(args *rpcs.SendStateArgs, reply *rpcs.SendStateReply) error {
+	// Sends State to LoadBalancer
+	m.stateMutex.Lock()
+	currentState := m.state
+	reply.State = currentState
+
+	m.state = make(map[uint64]rpcs.MMEState)
+	m.replicas = make([]string, 1)
+	m.stateMutex.Unlock()
 	return nil
 }
 
@@ -117,12 +140,24 @@ func (m *mme) RecvUERequest(args *rpcs.UERequestArgs, reply *rpcs.UERequestReply
 func (m *mme) RecvMMEStats(args *rpcs.MMEStatsArgs, reply *rpcs.MMEStatsReply) error {
 	// TODO: Implement this!
 	m.stateMutex.Lock()
-	fmt.Println(m.hostport, " - ", m.numServed)
 	reply.NumServed = m.numServed
+	sort.Strings(m.replicas)
+
 	reply.Replicas = m.replicas
 	reply.State = m.state
 	m.stateMutex.Unlock()
+
 	return nil
 }
 
 // TODO: add additional methods/functions below!
+func inRange(key, left, right, max uint64) bool {
+	current := left
+
+	for ; current != right; current = (current + 1) % max {
+		if current == key {
+			return true
+		}
+	}
+	return false
+}
